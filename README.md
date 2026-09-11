@@ -86,6 +86,8 @@ was actually detected.
 
 Example:
 
+![resume-timer-audit example output](docs/images/example-output.png)
+
 ```
 $ resume-timer-audit
 resume-timer-audit: 3 resume event(s), 12 timer(s) inspected
