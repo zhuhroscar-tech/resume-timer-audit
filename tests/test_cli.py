@@ -25,7 +25,7 @@ def test_text_output(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "resume-timer-audit:" in out
-    assert "[info]" in out
+    assert "example message" in out
 
 
 def test_json_output(monkeypatch, capsys):

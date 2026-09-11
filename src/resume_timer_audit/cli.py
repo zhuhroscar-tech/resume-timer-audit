@@ -7,6 +7,7 @@ import sys
 
 from . import __version__
 from .core import collect_and_evaluate
+from .style import resolve_style, status_headline
 
 LEVEL_EXIT = {"info": 0, "warn": 1, "fail": 2}
 
@@ -26,15 +27,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="How many days of journalctl history to scan for resume events (default: 14).",
     )
     p.add_argument("--json", action="store_true", help="Emit machine-readable JSON instead of text.")
+    p.add_argument("--no-color", action="store_true", help="Disable colored output.")
     return p
 
 
-def _print_text(report) -> None:
+def _print_text(report, style) -> None:
     print(f"resume-timer-audit: {report.resume_events_seen} resume event(s), "
           f"{report.timers_inspected} timer(s) inspected\n")
     for f in report.findings:
-        tag = {"info": "[info]", "warn": "[warn]", "fail": "[FAIL]"}[f.level]
-        print(f"{tag} {f.message}")
+        print(status_headline(style, f.level, f.message))
 
 
 def main(argv=None) -> int:
@@ -44,7 +45,8 @@ def main(argv=None) -> int:
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
     else:
-        _print_text(report)
+        style = resolve_style(no_color_flag=args.no_color)
+        _print_text(report, style)
 
     return LEVEL_EXIT.get(report.worst_level(), 0)
 
