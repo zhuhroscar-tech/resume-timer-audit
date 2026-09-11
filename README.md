@@ -1,5 +1,9 @@
 # resume-timer-audit
 
+[![CI](https://github.com/zhuhroscar-tech/resume-timer-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/zhuhroscar-tech/resume-timer-audit/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/zhuhroscar-tech/resume-timer-audit?include_prereleases&label=release)](https://github.com/zhuhroscar-tech/resume-timer-audit/releases)
+![Linux](https://img.shields.io/badge/platform-Linux-111111?logo=linux)
+
 Detects systemd timers that cluster/stall right after a laptop or desktop
 resumes from suspend — a real, currently-open upstream gap
 ([systemd#43350](https://github.com/systemd/systemd/issues/43350)).
@@ -19,6 +23,19 @@ This has been reported with real PSI-based (`/proc/pressure/`)
 instrumentation showing 88+ resume events with clustered timer firings
 and a measurable stall — and remains open upstream at the time this tool
 was written. No existing tool detects this specific signature.
+
+## Simple explanation
+
+On a laptop that sleeps and wakes up a lot, several unrelated background
+chores (like disk cleanup or log rotation) can all decide to run at the
+exact same moment right after you open the lid — because the "catch up
+on missed work" logic that normally spreads tasks out doesn't fully
+apply after waking from sleep, only after a full reboot. That pile-up
+can cause a noticeable slowdown right when you start using the machine.
+This tool checks your computer's sleep/wake history against its
+scheduled tasks and tells you exactly when and which tasks are
+clustering together. It only reads logs — it never changes any
+schedule.
 
 ## What it does
 
