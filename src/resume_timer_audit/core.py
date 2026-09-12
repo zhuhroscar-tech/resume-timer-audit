@@ -138,19 +138,28 @@ def _parse_journal_timestamp(line: str, year: int) -> Optional[datetime]:
         return None
 
 
-def get_resume_events(lookback_days: int = 14) -> list:
+def get_resume_events(lookback_days: int = 14) -> tuple:
     """Find resume-from-suspend events via journalctl markers.
 
     Looks for the two most reliable, widely-present markers:
       - "systemd-sleep" unit logging "System returned from suspend/hibernate"
       - kernel "PM: suspend exit" messages
-    Returns a de-duplicated, time-sorted list of ResumeEvent.
+    Returns (events, ok) -- a de-duplicated, time-sorted list of
+    ResumeEvent, and ``ok``.
+
+    ``ok`` is False when EITHER underlying `journalctl` invocation failed
+    (missing binary, permission denied -- the common case for a caller not
+    in the `systemd-journal` group, timeout). In that case an empty
+    ``events`` list means "we could not read the journal at all", not
+    "there were no resume events" -- callers must not collapse that into
+    a false all-clear, exactly the distinction `_run_checked` already
+    enforces for `get_timer_units` below.
     """
     since = f"-{lookback_days}d"
     events: list = []
     year = datetime.now().year
 
-    out = run(["journalctl", "--no-pager", "-u", "systemd-suspend.service",
+    out, ok1 = _run_checked(["journalctl", "--no-pager", "-u", "systemd-suspend.service",
                "-u", "systemd-hibernate.service", "-u", "systemd-suspend-then-hibernate.service",
                "--since", since])
     for line in out.splitlines():
@@ -159,7 +168,7 @@ def get_resume_events(lookback_days: int = 14) -> list:
             if ts:
                 events.append(ResumeEvent(ts, "journalctl: systemd-sleep"))
 
-    out = run(["journalctl", "--no-pager", "-k", "--since", since, "-g", "PM: suspend exit"])
+    out, ok2 = _run_checked(["journalctl", "--no-pager", "-k", "--since", since, "-g", "PM: suspend exit"])
     for line in out.splitlines():
         ts = _parse_journal_timestamp(line, year)
         if ts:
@@ -172,7 +181,7 @@ def get_resume_events(lookback_days: int = 14) -> list:
         if deduped and (e.timestamp - deduped[-1].timestamp) <= timedelta(seconds=5):
             continue
         deduped.append(e)
-    return deduped
+    return deduped, (ok1 and ok2)
 
 
 _LIST_TIMERS_LINE_RE = re.compile(
@@ -287,7 +296,7 @@ def find_clusters(resume_events: list, timers: list) -> list:
     return clusters
 
 
-def evaluate(resume_events: list, timers: list, list_timers_ok: bool = True) -> Report:
+def evaluate(resume_events: list, timers: list, list_timers_ok: bool = True, resume_events_ok: bool = True) -> Report:
     clusters = find_clusters(resume_events, timers)
     findings: list = []
 
@@ -298,7 +307,15 @@ def evaluate(resume_events: list, timers: list, list_timers_ok: bool = True) -> 
             "is unavailable) -- this result is incomplete, not a confirmed all-clear.",
         ))
 
-    if not resume_events:
+    if not resume_events_ok:
+        findings.append(Finding(
+            "warn",
+            "Could not read the journal for suspend/resume events (journalctl "
+            "failed or is unavailable -- e.g. this user is not in the "
+            "'systemd-journal' group) -- 'no resume events found' below is "
+            "unverified, not a confirmed all-clear.",
+        ))
+    elif not resume_events:
         findings.append(Finding("info", "No suspend/resume events found in the lookback window."))
     else:
         findings.append(Finding("info", f"Found {len(resume_events)} resume event(s) in the lookback window."))
@@ -334,6 +351,6 @@ def evaluate(resume_events: list, timers: list, list_timers_ok: bool = True) -> 
 
 
 def collect_and_evaluate(lookback_days: int = 14) -> Report:
-    resume_events = get_resume_events(lookback_days=lookback_days)
+    resume_events, resume_events_ok = get_resume_events(lookback_days=lookback_days)
     timers, list_timers_ok = get_timer_units()
-    return evaluate(resume_events, timers, list_timers_ok=list_timers_ok)
+    return evaluate(resume_events, timers, list_timers_ok=list_timers_ok, resume_events_ok=resume_events_ok)

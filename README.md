@@ -126,6 +126,10 @@ config, or logs of its own anywhere on disk.)
   in the `systemd-journal` group or running with elevated privileges,
   same as any other `journalctl` use.
 - Writes nothing to disk. Reads only journal and systemd unit metadata.
+- If `journalctl` itself cannot be read (permission denied, missing
+  binary, or a timeout) the tool reports a `[warn]` finding and a
+  non-zero exit code instead of silently reporting "no resume events" —
+  an unreadable journal is never conflated with a clean scan.
 
 ## Linux distro / architecture limits
 

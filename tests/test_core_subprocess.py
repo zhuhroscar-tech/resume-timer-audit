@@ -73,22 +73,25 @@ def test_get_resume_events_parses_systemd_sleep_and_kernel_markers(monkeypatch):
     must be de-duplicated into one ResumeEvent, and a second, unrelated
     kernel event outside the 5s window must survive as its own event."""
 
-    def fake_run(cmd, *a, **k):
+    def fake_run_checked(cmd, *a, **k):
         if "systemd-suspend.service" in cmd:
             return (
                 "Sep 10 08:30:00 host systemd-sleep[1]: Stopped System Suspend\n"
-                "not a matching line at all\n"
+                "not a matching line at all\n",
+                True,
             )
         if "-g" in cmd and "PM: suspend exit" in cmd:
             return (
                 "Sep 10 08:30:03 host kernel: PM: suspend exit\n"
-                "Sep 10 09:45:10 host kernel: PM: suspend exit\n"
+                "Sep 10 09:45:10 host kernel: PM: suspend exit\n",
+                True,
             )
-        return ""
+        return ("", True)
 
-    monkeypatch.setattr(core, "run", fake_run)
-    events = get_resume_events(lookback_days=7)
+    monkeypatch.setattr(core, "_run_checked", fake_run_checked)
+    events, ok = get_resume_events(lookback_days=7)
 
+    assert ok is True
     assert len(events) == 2
     assert events[0].source == "journalctl: systemd-sleep"
     assert events[0].timestamp.hour == 8 and events[0].timestamp.minute == 30
@@ -97,15 +100,49 @@ def test_get_resume_events_parses_systemd_sleep_and_kernel_markers(monkeypatch):
 
 
 def test_get_resume_events_empty_when_no_journal_output(monkeypatch):
-    monkeypatch.setattr(core, "run", lambda cmd, *a, **k: "")
-    assert get_resume_events() == []
+    monkeypatch.setattr(core, "_run_checked", lambda cmd, *a, **k: ("", True))
+    events, ok = get_resume_events()
+    assert events == []
+    assert ok is True
 
 
 def test_get_resume_events_ignores_unparseable_lines(monkeypatch):
     monkeypatch.setattr(
-        core, "run", lambda cmd, *a, **k: "totally malformed line with no timestamp\n"
+        core, "_run_checked", lambda cmd, *a, **k: ("totally malformed line with no timestamp\n", True)
     )
-    assert get_resume_events() == []
+    events, ok = get_resume_events()
+    assert events == []
+    assert ok is True
+
+
+def test_get_resume_events_returns_ok_false_when_either_journalctl_call_fails(monkeypatch):
+    """Regression: if journalctl fails (permission denied -- caller not in
+    the 'systemd-journal' group -- or the binary is missing), an empty
+    events list must be reported as unverified (ok=False), never silently
+    collapsed into "no resume events found" -- the same false-all-clear
+    class of bug get_timer_units already guards against via list_timers_ok."""
+
+    def fake_run_checked(cmd, *a, **k):
+        if "systemd-suspend.service" in cmd:
+            return ("", False)  # journalctl failed for the systemd-sleep query
+        return ("", True)  # kernel query succeeded, found nothing
+
+    monkeypatch.setattr(core, "_run_checked", fake_run_checked)
+    events, ok = get_resume_events()
+    assert events == []
+    assert ok is False
+
+
+def test_get_resume_events_ok_true_only_when_both_calls_succeed(monkeypatch):
+    def fake_run_checked(cmd, *a, **k):
+        if "-g" in cmd and "PM: suspend exit" in cmd:
+            return ("", False)  # kernel query fails even though sleep query worked
+        return ("", True)
+
+    monkeypatch.setattr(core, "_run_checked", fake_run_checked)
+    events, ok = get_resume_events()
+    assert events == []
+    assert ok is False
 
 
 # -- get_timer_units() ---------------------------------------------------
@@ -227,9 +264,10 @@ def test_collect_and_evaluate_wires_events_and_timers(monkeypatch):
     resume_time = datetime(2026, 9, 10, 8, 0, 0)
 
     monkeypatch.setattr(
-        core, "get_resume_events", lambda lookback_days=14: [
-            core.ResumeEvent(resume_time, "journalctl: systemd-sleep")
-        ]
+        core, "get_resume_events", lambda lookback_days=14: (
+            [core.ResumeEvent(resume_time, "journalctl: systemd-sleep")],
+            True,
+        )
     )
     monkeypatch.setattr(
         core, "get_timer_units", lambda: (
