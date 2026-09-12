@@ -29,6 +29,7 @@ from resume_timer_audit.core import (
 def test_run_returns_stdout_on_success(monkeypatch):
     class FakeResult:
         stdout = "hello\n"
+        returncode = 0
 
     def fake_run(cmd, capture_output, text, timeout, check):
         assert cmd == ["echo", "hi"]
@@ -41,6 +42,7 @@ def test_run_returns_stdout_on_success(monkeypatch):
 def test_run_returns_empty_string_when_stdout_is_none(monkeypatch):
     class FakeResult:
         stdout = None
+        returncode = 0
 
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: FakeResult())
     assert run(["whatever"]) == ""
@@ -132,16 +134,17 @@ def test_get_timer_units_parses_names_and_properties(monkeypatch):
         ),
     }
 
-    def fake_run(cmd, *a, **k):
+    def fake_run_checked(cmd, *a, **k):
         if cmd[0] == "systemctl" and cmd[1] == "list-timers":
-            return list_timers_out
+            return (list_timers_out, True)
         if cmd[0] == "systemctl" and cmd[1] == "show":
             name = cmd[2]
-            return show_outputs.get(name, "")
-        return ""
+            return (show_outputs.get(name, ""), True)
+        return ("", True)
 
-    monkeypatch.setattr(core, "run", fake_run)
-    units = get_timer_units()
+    monkeypatch.setattr(core, "_run_checked", fake_run_checked)
+    units, ok = get_timer_units()
+    assert ok is True
 
     assert [u.name for u in units] == ["custom.timer", "fstrim.timer"]
     fstrim = next(u for u in units if u.name == "fstrim.timer")
@@ -156,24 +159,34 @@ def test_get_timer_units_parses_names_and_properties(monkeypatch):
 
 
 def test_get_timer_units_no_timers_found(monkeypatch):
-    monkeypatch.setattr(core, "run", lambda cmd, *a, **k: "")
-    assert get_timer_units() == []
+    monkeypatch.setattr(core, "_run_checked", lambda cmd, *a, **k: ("", True))
+    units, ok = get_timer_units()
+    assert units == []
+    assert ok is True
 
 
 def test_get_timer_units_falls_back_to_bare_dot_timer_token(monkeypatch):
     """Lines that don't match the primary regex (e.g. odd column spacing)
     still get their unit name recovered via the plain-token fallback scan."""
 
-    def fake_run(cmd, *a, **k):
+    def fake_run_checked(cmd, *a, **k):
         if cmd[0] == "systemctl" and cmd[1] == "list-timers":
             # No trailing ".service" token -> primary regex can't match,
             # forcing the token-scan fallback branch.
-            return "weird.timer  (no service column here)\n"
-        return "Persistent=no\nRandomizedDelayUSec=0\nLastTriggerUSec=n/a\nNextElapseUSecRealtime=n/a\n"
+            return ("weird.timer  (no service column here)\n", True)
+        return ("Persistent=no\nRandomizedDelayUSec=0\nLastTriggerUSec=n/a\nNextElapseUSecRealtime=n/a\n", True)
 
-    monkeypatch.setattr(core, "run", fake_run)
-    units = get_timer_units()
+    monkeypatch.setattr(core, "_run_checked", fake_run_checked)
+    units, ok = get_timer_units()
     assert [u.name for u in units] == ["weird.timer"]
+    assert ok is True
+
+
+def test_get_timer_units_returns_ok_false_when_list_timers_fails(monkeypatch):
+    monkeypatch.setattr(core, "_run_checked", lambda cmd, *a, **k: ("", False))
+    units, ok = get_timer_units()
+    assert units == []
+    assert ok is False
 
 
 # -- misc small edge cases -------------------------------------------------
@@ -219,18 +232,21 @@ def test_collect_and_evaluate_wires_events_and_timers(monkeypatch):
         ]
     )
     monkeypatch.setattr(
-        core, "get_timer_units", lambda: [
-            TimerUnit(
-                name="a.timer", persistent=True,
-                randomized_delay_sec=None,
-                last_trigger=resume_time, next_elapse=None,
-            ),
-            TimerUnit(
-                name="b.timer", persistent=True,
-                randomized_delay_sec=None,
-                last_trigger=resume_time, next_elapse=None,
-            ),
-        ]
+        core, "get_timer_units", lambda: (
+            [
+                TimerUnit(
+                    name="a.timer", persistent=True,
+                    randomized_delay_sec=None,
+                    last_trigger=resume_time, next_elapse=None,
+                ),
+                TimerUnit(
+                    name="b.timer", persistent=True,
+                    randomized_delay_sec=None,
+                    last_trigger=resume_time, next_elapse=None,
+                ),
+            ],
+            True,
+        )
     )
 
     report = collect_and_evaluate(lookback_days=3)

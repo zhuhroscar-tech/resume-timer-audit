@@ -101,13 +101,25 @@ class Report:
 
 def run(cmd: list) -> str:
     """Run a read-only subprocess command, returning stdout (empty on error)."""
+    return _run_checked(cmd)[0]
+
+
+def _run_checked(cmd: list) -> tuple:
+    """Run a read-only subprocess command, returning (stdout, ok).
+
+    ``ok`` is False when the command could not be run at all (binary
+    missing, timeout) or exited non-zero -- i.e. whenever an empty stdout
+    does NOT reliably mean "nothing to report", only "we could not check".
+    Callers must not collapse that distinction into a false all-clear
+    (see get_resume_events / get_timer_units).
+    """
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=30, check=False
         )
-        return result.stdout or ""
+        return (result.stdout or "", result.returncode == 0)
     except (OSError, subprocess.SubprocessError):
-        return ""
+        return ("", False)
 
 
 _JOURNAL_TIMESTAMP_RE = re.compile(r"^(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s")
@@ -169,10 +181,17 @@ _LIST_TIMERS_LINE_RE = re.compile(
 )
 
 
-def get_timer_units() -> list:
+def get_timer_units() -> tuple:
     """Enumerate persistent timers with their last-trigger time and
-    RandomizedDelaySec setting, via `systemctl list-timers` + `show`."""
-    out = run(["systemctl", "list-timers", "--all", "--no-legend", "--no-pager"])
+    RandomizedDelaySec setting, via `systemctl list-timers` + `show`.
+
+    Returns (units, list_timers_ok). ``list_timers_ok`` is False when
+    `systemctl list-timers` itself failed (missing binary, non-systemd
+    host, permission error) -- in that case an empty ``units`` list means
+    "we could not enumerate timers at all", not "this host has zero
+    timers", and callers must not treat it as a clean scan.
+    """
+    out, ok = _run_checked(["systemctl", "list-timers", "--all", "--no-legend", "--no-pager"])
     names: list = []
     for line in out.splitlines():
         m = re.search(r"(\S+\.timer)\s+\S+\.service\s*$", line.strip())
@@ -214,7 +233,7 @@ def get_timer_units() -> list:
             last_trigger=last_trigger,
             next_elapse=next_elapse,
         ))
-    return units
+    return units, ok
 
 
 def _parse_systemd_duration(text: str) -> Optional[int]:
@@ -268,9 +287,16 @@ def find_clusters(resume_events: list, timers: list) -> list:
     return clusters
 
 
-def evaluate(resume_events: list, timers: list) -> Report:
+def evaluate(resume_events: list, timers: list, list_timers_ok: bool = True) -> Report:
     clusters = find_clusters(resume_events, timers)
     findings: list = []
+
+    if not list_timers_ok:
+        findings.append(Finding(
+            "warn",
+            "Could not enumerate systemd timers (systemctl list-timers failed or "
+            "is unavailable) -- this result is incomplete, not a confirmed all-clear.",
+        ))
 
     if not resume_events:
         findings.append(Finding("info", "No suspend/resume events found in the lookback window."))
@@ -309,5 +335,5 @@ def evaluate(resume_events: list, timers: list) -> Report:
 
 def collect_and_evaluate(lookback_days: int = 14) -> Report:
     resume_events = get_resume_events(lookback_days=lookback_days)
-    timers = get_timer_units()
-    return evaluate(resume_events, timers)
+    timers, list_timers_ok = get_timer_units()
+    return evaluate(resume_events, timers, list_timers_ok=list_timers_ok)

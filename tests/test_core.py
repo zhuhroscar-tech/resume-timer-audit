@@ -122,6 +122,34 @@ def test_evaluate_warns_on_missing_randomized_delay():
     assert "warn" in levels
 
 
+def test_evaluate_warns_when_list_timers_failed():
+    # Before this fix, a failed `systemctl list-timers` (missing binary,
+    # non-systemd host) produced timers=[] which evaluate() could not tell
+    # apart from "genuinely zero timers on this host" -- silently reporting
+    # a clean "0 timers inspected, no clustering" result.
+    report = evaluate([], [], list_timers_ok=False)
+    levels = [f.level for f in report.findings]
+    assert "warn" in levels
+    assert any("could not enumerate" in f.message.lower() for f in report.findings)
+
+
+def test_evaluate_default_list_timers_ok_true_is_backward_compatible():
+    report = evaluate([], [])
+    assert not any("could not enumerate" in f.message.lower() for f in report.findings)
+
+
+def test_get_timer_units_returns_ok_false_on_systemctl_failure(monkeypatch):
+    import resume_timer_audit.core as core_mod
+
+    def fake_run_checked(cmd):
+        return ("", False)
+
+    monkeypatch.setattr(core_mod, "_run_checked", fake_run_checked)
+    units, ok = core_mod.get_timer_units()
+    assert units == []
+    assert ok is False
+
+
 def test_report_to_dict_roundtrip():
     resume_time = datetime(2026, 9, 10, 8, 0, 0)
     resume = ResumeEvent(resume_time, "journalctl: systemd-sleep")
