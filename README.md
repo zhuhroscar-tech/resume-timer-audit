@@ -65,7 +65,7 @@ pip install resume-timer-audit
 Or run the standalone zipapp with no install:
 
 ```bash
-curl -LO https://github.com/zhuhroscar-tech/resume-timer-audit/releases/download/v0.1.0/resume-timer-audit.pyz
+curl -LO https://github.com/zhuhroscar-tech/resume-timer-audit/releases/latest/download/resume-timer-audit.pyz
 python3 resume-timer-audit.pyz --version
 ```
 
