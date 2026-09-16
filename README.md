@@ -1,156 +1,52 @@
 # resume-timer-audit
 
-[![CI](https://github.com/zhuhroscar-tech/resume-timer-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/zhuhroscar-tech/resume-timer-audit/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/zhuhroscar-tech/resume-timer-audit?include_prereleases&label=release)](https://github.com/zhuhroscar-tech/resume-timer-audit/releases)
-![Linux](https://img.shields.io/badge/platform-Linux-111111?logo=linux)
+[![English](https://img.shields.io/badge/English-555555?style=flat)](README.md) [![简体中文](https://img.shields.io/badge/简体中文-555555?style=flat)](README.zh-CN.md)
 
-Detects systemd timers that cluster/stall right after a laptop or desktop
-resumes from suspend — a real, currently-open upstream gap
-([systemd#43350](https://github.com/systemd/systemd/issues/43350)).
+A read-only Linux diagnostic for systemd timers that fire together immediately after suspend/resume. It correlates wake events from the journal with timers' most recent trigger times and highlights persistent timers without randomized delay.
 
-## The problem
+![Example timer audit](docs/images/example-output.png)
 
-`Persistent=true` on a systemd timer is meant to catch up a missed run —
-and it correctly re-anchors that catch-up after a **reboot**. It does
-**not** get the same re-anchor after a **resume from suspend**. The result:
-several independent timers (`fstrim.timer`, `logrotate.timer`, backup
-timers, etc.), each individually reasonable, can all fire together the
-instant a laptop wakes up — instead of being spread out the way
-`RandomizedDelaySec=` is meant to achieve. That produces a real, measurable
-CPU/IO stall right when someone starts using the machine.
+This is a way to investigate a suspected wake-time workload pile-up, not a scheduler or an automatic fix. Background: [systemd #43350](https://github.com/systemd/systemd/issues/43350).
 
-This has been reported with real PSI-based (`/proc/pressure/`)
-instrumentation showing 88+ resume events with clustered timer firings
-and a measurable stall — and remains open upstream at the time this tool
-was written. No existing tool detects this specific signature.
+## Requirements and installation
 
-## Simple explanation
-
-On a laptop that sleeps and wakes up a lot, several unrelated background
-chores (like disk cleanup or log rotation) can all decide to run at the
-exact same moment right after you open the lid — because the "catch up
-on missed work" logic that normally spreads tasks out doesn't fully
-apply after waking from sleep, only after a full reboot. That pile-up
-can cause a noticeable slowdown right when you start using the machine.
-This tool checks your computer's sleep/wake history against its
-scheduled tasks and tells you exactly when and which tasks are
-clustering together. It only reads logs — it never changes any
-schedule.
-
-## What it does
-
-`resume-timer-audit` is a **strictly read-only** diagnostic:
-
-1. Reads `journalctl` for suspend/resume boundaries (`systemd-sleep` unit
-   events and kernel `PM: suspend exit` markers).
-2. Reads `systemctl list-timers --all` / `systemctl show` for each
-   persistent timer's last-trigger time and `RandomizedDelaySec=` setting.
-3. Cross-references: flags any resume event where 2+ persistent timers
-   fired within a 90-second window right after resume (the
-   thundering-herd signature), and separately flags persistent timers
-   that have no `RandomizedDelaySec=` at all.
-
-It **never** modifies timer units, starts/stops services, or touches
-systemd configuration in any way. It only reads.
-
-## Install
-
-Requires Python 3.9+ on Linux (uses `journalctl` and `systemctl`, so this
-tool is meaningless on non-systemd systems and on macOS/Windows).
+Requires Python 3.9+, Linux with systemd, and `journalctl` / `systemctl` on PATH. It is not a useful host diagnostic on macOS, Windows, or non-systemd Linux. Runtime Python dependencies are standard-library only.
 
 ```bash
-pip install resume-timer-audit
-```
-
-Or run the standalone zipapp with no install:
-
-```bash
-curl -LO https://github.com/zhuhroscar-tech/resume-timer-audit/releases/latest/download/resume-timer-audit.pyz
-python3 resume-timer-audit.pyz --version
-```
-
-Verify the download against `SHA256SUMS.txt` in the same release before
-running it.
-
-## Usage
-
-```bash
-resume-timer-audit                    # plain-English report
-resume-timer-audit --json             # machine-readable report
-resume-timer-audit --lookback-days 30 # scan a longer journalctl history
-```
-
-Exit codes: `0` = no findings above info level, `1` = warning(s) only
-(e.g. missing `RandomizedDelaySec=`), `2` = a resume-clustering signature
-was actually detected.
-
-Example:
-
-![resume-timer-audit example output](docs/images/example-output.png)
-
-```
-$ resume-timer-audit
-resume-timer-audit: 3 resume event(s), 12 timer(s) inspected
-
-[info] Found 3 resume event(s) in the lookback window.
-[info] Inspected 12 timer(s), 5 with Persistent=true.
-[warn] 2 persistent timer(s) have no RandomizedDelaySec=, making resume-time
-       clustering worse if it occurs: fstrim.timer, logrotate.timer
-[FAIL] Thundering-herd signature: 2 persistent timers (fstrim.timer,
-       logrotate.timer) fired within 90s of resume at 2026-09-08T08:12:03
-       (systemd upstream issue #43350).
-```
-
-## If it finds a problem
-
-This tool only diagnoses; it does not modify anything. If it flags a
-cluster, the practical mitigations today (until systemd#43350 lands
-upstream) are:
-- Add `RandomizedDelaySec=` to the affected timer units yourself.
-- Stagger `OnCalendar=` times for timers that don't strictly need to run
-  at the same wall-clock time.
-
-## Uninstall
-
-```bash
-pip uninstall resume-timer-audit
-```
-(Or simply delete the downloaded `.pyz` file — it writes no state files,
-config, or logs of its own anywhere on disk.)
-
-## Privacy / permissions
-
-- No network access, no telemetry, no data leaves your machine.
-- No root required for normal read access to `journalctl --user`-visible
-  logs and `systemctl show`; system-wide journal access may require being
-  in the `systemd-journal` group or running with elevated privileges,
-  same as any other `journalctl` use.
-- Writes nothing to disk. Reads only journal and systemd unit metadata.
-- If `journalctl` itself cannot be read (permission denied, missing
-  binary, or a timeout) the tool reports a `[warn]` finding and a
-  non-zero exit code instead of silently reporting "no resume events" —
-  an unreadable journal is never conflated with a clean scan.
-
-## Linux distro / architecture limits
-
-Requires systemd (the vast majority of current distros). Tested via real
-`ubuntu-latest` GitHub Actions runners (Python 3.9 and 3.12). Should work
-on any systemd-based distro with `journalctl`/`systemctl` on PATH;
-architecture-independent (pure Python, no compiled dependencies).
-
-## Reproducible build / test
-
-```bash
-git clone https://github.com/zhuhroscar-tech/resume-timer-audit
+git clone https://github.com/zhuhroscar-tech/resume-timer-audit.git
 cd resume-timer-audit
-python3 -m pip install -e .[dev]
-python3 -m pytest -v
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+resume-timer-audit --help
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same suite on real Ubuntu
-runners across Python 3.9 and 3.12, then builds and smoke-tests both the
-wheel/sdist and a standalone `.pyz`.
+Alternatively, use the standalone `.pyz` from [GitHub Releases](https://github.com/zhuhroscar-tech/resume-timer-audit/releases), verifying it against the release's `SHA256SUMS.txt` before execution.
 
-## License
+## Run an audit
 
-MIT — see [LICENSE](LICENSE).
+```bash
+resume-timer-audit
+resume-timer-audit --json
+resume-timer-audit --lookback-days 30
+```
+
+The default journal lookback is 14 days. A cluster means at least two persistent timers have their latest trigger within 90 seconds after the same resume event. Exit codes are `0` for informational findings only, `1` for warnings, and `2` for a detected cluster.
+
+System-wide journal access may require membership in `systemd-journal` or elevated privileges. Journal or timer-enumeration failures produce warnings rather than a confirmed all-clear.
+
+## Limits and safety
+
+- Reads logs and unit metadata only; never edits timer units, starts services, changes schedules, or writes its own state files. No network requests or telemetry.
+- Uses each timer's **latest trigger**, not a complete history of every firing. A longer lookback cannot recover overwritten trigger metadata.
+- Timestamp parsing is best-effort and assumes the current year for short journal timestamps. Locale, timezone, and year boundaries can affect results.
+- A cluster indicates timing correlation, not proof of CPU/IO contention or its cause. Review the affected units and workload before manually changing randomized delays or calendar times.
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+pytest -v
+```
+
+The [test suite](tests) covers parsing, clustering, subprocess failures, and CLI behavior. [MIT license](LICENSE).
