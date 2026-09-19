@@ -14,13 +14,38 @@ from resume_timer_audit.core import (
 
 def test_parse_journal_timestamp():
     line = "Sep 10 08:30:01 host systemd-sleep[123]: System returned from suspend"
-    ts = _parse_journal_timestamp(line, 2026)
+    ts = _parse_journal_timestamp(line, datetime(2026, 9, 10, 9, 0, 0))
     assert ts is not None
     assert ts.month == 9 and ts.day == 10 and ts.hour == 8 and ts.minute == 30
 
 
 def test_parse_journal_timestamp_no_match():
-    assert _parse_journal_timestamp("not a journal line", 2026) is None
+    assert _parse_journal_timestamp("not a journal line", datetime(2026, 9, 10)) is None
+
+
+def test_parse_journal_timestamp_year_rollover_previous_year():
+    # Regression test for the year-boundary bug: before the fix, a log
+    # line from late December (previous year) parsed while running in
+    # early January (new year) was silently stamped with the WRONG,
+    # ~365-days-in-the-future year -- which breaks find_clusters() since
+    # it compares against systemctl's own correctly-yeared timestamps.
+    # This would have FAILED before the fix (ts.year == 2027, not 2026).
+    line = "Dec 31 23:58:00 host systemd-sleep[123]: System returned from suspend"
+    reference_now = datetime(2027, 1, 2, 10, 0, 0)
+    ts = _parse_journal_timestamp(line, reference_now)
+    assert ts is not None
+    assert ts.year == 2026
+    assert ts.month == 12 and ts.day == 31
+    assert ts < reference_now
+
+
+def test_parse_journal_timestamp_same_year_not_rolled_back():
+    # A normal same-year timestamp must NOT be shifted to the previous year.
+    line = "Jan 01 00:05:00 host systemd-sleep[123]: System returned from suspend"
+    reference_now = datetime(2027, 1, 2, 10, 0, 0)
+    ts = _parse_journal_timestamp(line, reference_now)
+    assert ts is not None
+    assert ts.year == 2027
 
 
 def test_parse_systemd_duration_various_units():

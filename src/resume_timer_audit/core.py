@@ -125,17 +125,32 @@ def _run_checked(cmd: list) -> tuple:
 _JOURNAL_TIMESTAMP_RE = re.compile(r"^(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s")
 
 
-def _parse_journal_timestamp(line: str, year: int) -> Optional[datetime]:
+def _parse_journal_timestamp(line: str, reference_now: datetime) -> Optional[datetime]:
+    """Parse a journalctl short-format timestamp (no year field).
+
+    journalctl's default short format omits the year, so we assume
+    ``reference_now``'s year. But right after a year rollover, a log line
+    from late December of the PREVIOUS year would otherwise get stamped
+    with the NEW year -- e.g. parsing "Dec 31 23:58:00" while running on
+    Jan 2 would wrongly produce a timestamp ~365 days in the FUTURE. That
+    silently breaks resume-clustering: find_clusters() compares this
+    value against systemctl's own (correctly-yeared) LastTriggerUSec, so
+    a year mismatch means a real thundering-herd cluster spanning a New
+    Year's resume is silently missed for the tool's entire lookback
+    window -- exactly the false all-clear this tool exists to prevent.
+    If the naive parse lands more than a day in the future (allowing for
+    minor clock skew), it must actually be from the previous year.
+    """
     m = _JOURNAL_TIMESTAMP_RE.match(line)
     if not m:
         return None
     try:
-        # journalctl's default short format has no year; assume current year,
-        # which is fine for the resume-clustering heuristic (relative deltas
-        # matter, not absolute calendar correctness across year boundaries).
-        return datetime.strptime(f"{year} {m.group(1)}", "%Y %b %d %H:%M:%S")
+        ts = datetime.strptime(f"{reference_now.year} {m.group(1)}", "%Y %b %d %H:%M:%S")
     except ValueError:
         return None
+    if ts > reference_now + timedelta(days=1):
+        ts = ts.replace(year=ts.year - 1)
+    return ts
 
 
 def get_resume_events(lookback_days: int = 14) -> tuple:
@@ -157,20 +172,20 @@ def get_resume_events(lookback_days: int = 14) -> tuple:
     """
     since = f"-{lookback_days}d"
     events: list = []
-    year = datetime.now().year
+    reference_now = datetime.now()
 
     out, ok1 = _run_checked(["journalctl", "--no-pager", "-u", "systemd-suspend.service",
                "-u", "systemd-hibernate.service", "-u", "systemd-suspend-then-hibernate.service",
                "--since", since])
     for line in out.splitlines():
         if "Stopped" in line or "Finished" in line or "returned from" in line.lower():
-            ts = _parse_journal_timestamp(line, year)
+            ts = _parse_journal_timestamp(line, reference_now)
             if ts:
                 events.append(ResumeEvent(ts, "journalctl: systemd-sleep"))
 
     out, ok2 = _run_checked(["journalctl", "--no-pager", "-k", "--since", since, "-g", "PM: suspend exit"])
     for line in out.splitlines():
-        ts = _parse_journal_timestamp(line, year)
+        ts = _parse_journal_timestamp(line, reference_now)
         if ts:
             events.append(ResumeEvent(ts, "journalctl: kernel PM suspend exit"))
 

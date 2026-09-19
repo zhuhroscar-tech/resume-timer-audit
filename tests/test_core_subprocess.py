@@ -233,7 +233,7 @@ def test_parse_journal_timestamp_bad_value_raises_value_error_swallowed():
     # Matches the regex shape but with an impossible calendar value, so
     # strptime raises ValueError, which _parse_journal_timestamp must catch.
     line = "Xyz 99 99:99:99 host systemd-sleep[1]: Stopped\n"
-    assert _parse_journal_timestamp(line, 2026) is None
+    assert _parse_journal_timestamp(line, datetime(2026, 1, 1)) is None
 
 
 def test_parse_systemd_timestamp_bad_value_raises_value_error_swallowed():
