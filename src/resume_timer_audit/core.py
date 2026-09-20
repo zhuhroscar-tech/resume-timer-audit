@@ -209,11 +209,26 @@ def get_timer_units() -> tuple:
     """Enumerate persistent timers with their last-trigger time and
     RandomizedDelaySec setting, via `systemctl list-timers` + `show`.
 
-    Returns (units, list_timers_ok). ``list_timers_ok`` is False when
-    `systemctl list-timers` itself failed (missing binary, non-systemd
-    host, permission error) -- in that case an empty ``units`` list means
-    "we could not enumerate timers at all", not "this host has zero
-    timers", and callers must not treat it as a clean scan.
+    Returns (units, ok). ``ok`` is False when `systemctl list-timers`
+    itself failed (missing binary, non-systemd host, permission error)
+    -- in that case an empty ``units`` list means "we could not
+    enumerate timers at all", not "this host has zero timers", and
+    callers must not treat it as a clean scan.
+
+    ``ok`` is ALSO False when `systemctl show` fails for any individual
+    unit (transient dbus error, unit removed between `list-timers` and
+    `show`, permission denied on that specific unit). Before this fix,
+    a per-unit `show` failure was silently swallowed via the
+    ok-discarding `run()` wrapper: the unit was still added to
+    ``units`` with fabricated defaults (``persistent=False``,
+    ``last_trigger=None``) as if `systemctl show` had genuinely
+    reported "not persistent, never triggered" -- the same
+    silent-false-all-clear bug class already fixed in this fleet's
+    other doctor CLIs (usbsmart-doctor, unmount-doctor, zram-doctor),
+    just in a different code path here. A unit that IS persistent with
+    a real recent trigger, but whose `show` call happened to fail,
+    would be silently dropped from cluster detection instead of
+    flagging the whole scan as incomplete.
     """
     out, ok = _run_checked(["systemctl", "list-timers", "--all", "--no-legend", "--no-pager"])
     names: list = []
@@ -230,8 +245,13 @@ def get_timer_units() -> tuple:
 
     units: list = []
     for name in sorted(set(names)):
-        show = run(["systemctl", "show", name,
+        show, show_ok = _run_checked(["systemctl", "show", name,
                     "--property=Persistent,RandomizedDelayUSec,LastTriggerUSec,NextElapseUSecRealtime"])
+        if not show_ok:
+            # Cannot trust this unit's data at all -- do not fabricate a
+            # "not persistent" default; mark the whole scan incomplete.
+            ok = False
+            continue
         props = {}
         for line in show.splitlines():
             if "=" in line:

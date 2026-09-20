@@ -226,6 +226,38 @@ def test_get_timer_units_returns_ok_false_when_list_timers_fails(monkeypatch):
     assert ok is False
 
 
+def test_get_timer_units_returns_ok_false_when_show_fails_for_a_unit(monkeypatch):
+    """Before this fix, a per-unit `systemctl show` failure was silently
+    swallowed via the ok-discarding `run()` wrapper: the unit got added
+    with fabricated defaults (persistent=False, last_trigger=None) as
+    if `show` had genuinely reported "not persistent" -- the same
+    silent-false-all-clear bug class already fixed elsewhere in this
+    fleet, here in a different code path. A real persistent timer whose
+    `show` call fails must not be silently dropped from cluster
+    detection with a fabricated all-clear; the whole scan must be
+    flagged incomplete (ok=False) and the untrustworthy unit excluded.
+    """
+    list_timers_out = (
+        "Wed 2026-09-10 09:00:00 UTC  1h left  Wed 2026-09-10 08:00:00 UTC  1h ago  "
+        "fstrim.timer          fstrim.service\n"
+    )
+
+    def fake_run_checked(cmd, *a, **k):
+        if cmd[0] == "systemctl" and cmd[1] == "list-timers":
+            return (list_timers_out, True)
+        if cmd[0] == "systemctl" and cmd[1] == "show":
+            # Simulate a transient dbus/permission failure for this unit.
+            return ("", False)
+        return ("", True)
+
+    monkeypatch.setattr(core, "_run_checked", fake_run_checked)
+    units, ok = get_timer_units()
+    assert ok is False
+    # The untrustworthy unit must not be silently included with
+    # fabricated persistent=False / last_trigger=None defaults.
+    assert units == []
+
+
 # -- misc small edge cases -------------------------------------------------
 
 
