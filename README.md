@@ -21,7 +21,7 @@ pip install -e .
 resume-timer-audit --help
 ```
 
-Alternatively, use the standalone `.pyz` from [GitHub Releases](https://github.com/zhuhroscar-tech/resume-timer-audit/releases), verifying it against the release's `SHA256SUMS.txt` before execution.
+Alternatively, use the standalone `.pyz` from [GitHub Releases](https://github.com/zhuhroscar-tech/resume-timer-audit/releases), verifying it against the release's `SHA256SUMS.txt` before execution. Release history is tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## Run an audit
 

@@ -21,7 +21,7 @@ pip install -e .
 resume-timer-audit --help
 ```
 
-也可使用 [GitHub Releases](https://github.com/zhuhroscar-tech/resume-timer-audit/releases) 中的独立 `.pyz`，执行前先用同一 release 的 `SHA256SUMS.txt` 校验。
+也可使用 [GitHub Releases](https://github.com/zhuhroscar-tech/resume-timer-audit/releases) 中的独立 `.pyz`，执行前先用同一 release 的 `SHA256SUMS.txt` 校验。发布历史记录在 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 运行审计
 
