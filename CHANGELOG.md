@@ -2,6 +2,11 @@
 
 All notable changes to `resume-timer-audit` are listed here. Dates use UTC publication dates.
 
+## v0.1.10 — 2026-09-25
+
+- Make release-tag CI explicit for `v*` tags so release validation runs on tag pushes as well as main-branch pushes.
+- Add package project URLs for homepage, issue tracker, and changelog metadata.
+
 ## v0.1.9 — 2026-09-24
 
 - Add this changelog and link it from both READMEs.

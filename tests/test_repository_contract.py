@@ -62,12 +62,23 @@ def test_changelog_tracks_current_version_and_prior_bugfixes():
 def test_ci_workflow_covers_tests_build_pyz_and_release_assets():
     ci = _read(".github/workflows/ci.yml")
 
+    assert "branches: [main]" in ci
+    assert 'tags: ["v*"]' in ci
     assert "python -m pytest" in ci
     assert "python -m build" in ci
     assert "python -m zipapp" in ci
     assert "resume-timer-audit.pyz" in ci
     assert "SHA256SUMS.txt" in ci
     assert "actions/upload-artifact@v4" in ci
+
+
+def test_package_metadata_links_to_project_resources():
+    pyproject = _read("pyproject.toml")
+
+    assert '[project.urls]' in pyproject
+    assert 'Homepage = "https://github.com/zhuhroscar-tech/resume-timer-audit"' in pyproject
+    assert 'Issues = "https://github.com/zhuhroscar-tech/resume-timer-audit/issues"' in pyproject
+    assert 'Changelog = "https://github.com/zhuhroscar-tech/resume-timer-audit/blob/main/CHANGELOG.md"' in pyproject
 
 
 def test_codeql_workflow_scans_python():
